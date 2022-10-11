@@ -1,0 +1,73 @@
+- hosts: app
+  become: yes
+  tasks: 
+  - name: install docker 
+    package: 
+      name: "{{ docker_pkg }}"
+      state: 'present'
+  - name: start docker
+    service:
+      name: 'docker'
+      state: 'started'
+
+- hosts: database
+  become: yes
+  tasks:
+  - name: Install Posgresql
+    package:
+      name: "postgresql-{{ pg_version  }}"
+      state: present
+
+  - name: Read current postgresql data folder
+    shell: pg_conftool -s show data_directory
+    register: pg_current_data_directory
+
+  - name: change posgresql data directory
+    block:
+    - name: Stop postgresql server
+      service:
+        name: postgresql
+        state: stopped
+
+    - name: Check if the new postgresql data directory exists
+      stat: path={{ pg_data_directory }}
+      register: postgresql_data_dir
+
+    - name: Create data folder
+      file:
+        path: "{{pg_data_directory}}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: 0700
+      when: postgresql_data_dir.stat.isdir is not defined
+
+    - name: copy data directory
+      copy:
+        src: "{{ pg_current_data_directory.stdout  }}/"
+        dest: "{{pg_data_directory}}"
+        remote_src: yes
+        mode: preserve
+        owner: postgres
+        group: postgres
+
+    - name: Remove old data directory
+      file:
+        path: "{{ pg_current_data_directory.stdout  }}"
+        state: absent
+
+    - name: Edit config postgresql
+      lineinfile:
+        path: "/etc/postgresql/{{ pg_version }}/main/postgresql.conf"
+        regexp: '^data_directory'
+        line: "data_directory = '{{ pg_data_directory }}'"
+
+    - name: Start postgresql server
+      service:
+        name: postgresql
+        state: started
+    when: pg_current_data_directory.stdout != pg_data_directory
+  - name: Start postgresql server
+    service:
+      name: postgresql
+      state: started
